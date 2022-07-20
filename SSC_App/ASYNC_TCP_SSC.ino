@@ -14,7 +14,6 @@
 #include <HTTPClient.h> /* to send and recieve from internet */
 #include <ArduinoJson.h> /* to use JSON */
 #include <LiquidCrystal.h> /* to use LCD */
-#include <EEPROM.h>
 
 /*******************************************************************************
                                   Definitions
@@ -32,22 +31,24 @@
                              Global Variables
  ******************************************************************************/
 
-const char* ssid = "WE/Zeft";                                                                 /* WiFi Name */
-const char* password = "5432154321";                                                         /* WiFi Password */
-const char* serverName = "https://smartcart-helwan.herokuapp.com/api/add_orderItems";       /* API */
-const char* Login_serverName = "https://smartcart-helwan.herokuapp.com/api/send-token";    /* API */
-const char* Logout_serverName = "https://smartcart-helwan.herokuapp.com/api/logout-cart"; /* API */
-int httpResponseCode;                                                                    /* Variable to store HTTP response code */
-int httpResponseCode1;                                                                  /* Variable to store HTTP response code */
-char counter = 0;                                                                      /* Counter Loop */
-char Data = 0;                                                                        /* Variable to read incoming serial data */
-char Buffer_counter = 0;                                                             /* Variable to track elements */
-char Bar_Code[BUFFER_SIZE];                                                         /* Array to store data */
+const char* ssid = "WE/Zeft";                                                                           /* WiFi Name */
+const char* password = "5432154321";                                                                   /* WiFi Password */
+const char* serverName = "https://smartcart-helwan.herokuapp.com/api/add_orderItems";                 /* API */
+const char* Login_serverName = "https://smartcart-helwan.herokuapp.com/api/login-cart";              /* API */
+const char* Logout_serverName = "https://smartcart-helwan.herokuapp.com/api/logout-cart";           /* API */
+const char* Inform_Login_API = "https://smartcart-helwan.herokuapp.com/api/confirm-login-cart";    /* API */
+const char* Inform_Logout_API = "https://smartcart-helwan.herokuapp.com/api/confirm-logout-cart"; /* API */
+int httpResponseCode;                                                                            /* Variable to store HTTP response code */
+char counter = 0;                                                                               /* Counter Loop */
+char Data = 0;                                                                                 /* Variable to read incoming serial data */
+char Buffer_counter = 0;                                                                      /* Variable to track elements */
+char Bar_Code[BUFFER_SIZE];                                                                  /* Array to store data */
 char login_barcode[BUFFER_SIZE];
 char logout_barcode[BUFFER_SIZE];
-char Logic = FALSE;                                                               /* Variable to track Logic of Logging in */
+char Logic = FALSE;                                                                        /* Variable to track Logic of Logging in */
 char Logged_IN = FALSE;
 char Logged_OUT = TRUE;
+char First_POST_Data = FALSE;
 int Login_Counter = 0;
 int Logout_Counter = 0;
 unsigned long lastTime = 0;
@@ -69,6 +70,42 @@ String payload_logout;                                        /* String to store
                                  Function Definitions
  *******************************************************************************/
 
+void Logout_POST_Request(void) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient Client;
+    Client.begin(Inform_Logout_API);
+    Client.addHeader("Content-Type", "application/json");
+    String requestBody;                           /* String to store post request */
+    StaticJsonDocument<200> doc;                 /* JSON document to store request */
+    doc["Status"] = "Logged out";
+    serializeJson(doc, requestBody);
+    Client.POST(requestBody);
+    // Free resources
+    Client.end();
+  }
+  else {
+    Serial.println("WiFi Disconnected");
+  }
+}
+
+void Login_POST_Request(void) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient Client;
+    Client.begin(Inform_Login_API);
+    Client.addHeader("Content-Type", "application/json");
+    String requestBody;                           /* String to store post request */
+    StaticJsonDocument<200> doc;                 /* JSON document to store request */
+    doc["Status"] = "Logged In";
+    serializeJson(doc, requestBody);
+    Client.POST(requestBody);
+    // Free resources
+    Client.end();
+  }
+  else {
+    Serial.println("WiFi Disconnected");
+  }
+}
+
 char Login_GET_Request(void) {
   HTTPClient Client;
   if (WiFi.status() == WL_CONNECTED) {
@@ -85,6 +122,29 @@ char Login_GET_Request(void) {
           if (payloadd.length() > 3) {
             Serial.print("Logged in with Token: ");
             Serial.println(payloadd);
+
+            /* CREATE ORDER */
+            //            HTTPClient Cart;
+            //            Cart.begin(Inform_Logout_API);
+            //            String CartTOKEN;
+            //            CartTOKEN = payloadd.substring(1, 41);
+            //            String CreateOrder = "Token " + CartTOKEN;
+            //            Cart.addHeader("Authorization", CreateOrder);
+            //            Cart.addHeader("Content-Type", "application/json");
+            //            String requestBody;                           /* String to store post request */
+            //            StaticJsonDocument<200> Cartdoc;
+            //            Cartdoc["cart"] = "1";
+            //            Serial.println(requestBody);
+            //            serializeJson(Cartdoc, requestBody);
+            //            Cart.POST(requestBody);
+            //            if (httpResponseCode > 0) {
+            //            String payload = http.getString();
+            //            Serial.println(payload);
+            //             }
+            //          // Free resources
+            //             Cart.end();
+            /* ********* */
+
             strcpy(Bar_Code, "");
             lcd.clear();
             lcd.print("Successfully logged in!");
@@ -197,15 +257,18 @@ void loop() {
     }
     counter++;
     if (counter == 11) {
+      //Serial2.flush();
       Serial.println();
       lcd.setCursor(0, 1);
       counter = 0;
       Buffer_counter = 0;
+
       if (Logged_IN == FALSE) {
         if (Login_GET_Request() == HTTPS_LOGGED_IN) {
           Logic = TRUE;
           Logged_IN = TRUE;
           Logged_OUT = FALSE;
+          Login_POST_Request();
         }
         else {
           if (Login_Counter == 30) {
@@ -235,6 +298,9 @@ void loop() {
           Logic = FALSE;
           Logged_IN = FALSE;
           Logged_OUT = TRUE;
+          Logout_POST_Request();
+          First_POST_Data = FALSE;
+          ESP.restart();
         }
         else {
           if (Logout_Counter == 30) {
@@ -257,25 +323,28 @@ void loop() {
       }
       if (Logic == TRUE) {
         if (WiFi.status() == WL_CONNECTED) {
-          http.begin(serverName);
-          http.addHeader("Content-Type", "application/json");
-          String TOKEN;
-          TOKEN = payloadd.substring(1, 41);
-          String something = "Token " + TOKEN;
-          http.addHeader("Authorization", something);
-          String requestBody;                           /* String to store post request */
-          StaticJsonDocument<200> doc;                 /* JSON document to store request */
-          doc["barcode"] = Bar_Code;
-          serializeJson(doc, requestBody);
-          // Send HTTP POST request
-          Serial.println(requestBody);
-          int httpResponseCode = http.POST(requestBody);
-          if (httpResponseCode > 0) {
-            payload = http.getString();
-            Serial.println(payload);
+          if (strcmp(Bar_Code,"") != 0) {
+            http.begin(serverName);
+            http.addHeader("Content-Type", "application/json");
+            String TOKEN;
+            TOKEN = payloadd.substring(1, 41);
+            String something = "Token " + TOKEN;
+            Serial.println(something);
+            http.addHeader("Authorization", something);
+            String requestBody;                           /* String to store post request */
+            StaticJsonDocument<200> doc;                 /* JSON document to store request */
+            doc["barcode"] = Bar_Code;
+            serializeJson(doc, requestBody);
+            // Send HTTP POST request
+            Serial.println(requestBody);
+            httpResponseCode = http.POST(requestBody);
+            if (httpResponseCode > 0) {
+              payload = http.getString();
+              Serial.println(payload);
+            }
+            // Free resources
+            http.end();
           }
-          // Free resources
-          http.end();
         }
         else {
           Serial.println("WiFi Disconnected");
